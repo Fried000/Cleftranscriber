@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FileImage, RotateCcw, Sparkles, Upload } from 'lucide-react';
 import Header from './components/Header';
 import ImagePreview from './components/ImagePreview';
@@ -57,6 +57,10 @@ function App() {
   const [transcriptionUrl, setTranscriptionUrl] = useState<string | null>(null);
   const [noteCount, setNoteCount] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [sampleMode, setSampleMode] = useState(false);
+  const [sampleFirstNote, setSampleFirstNote] = useState('C4');
+  const [isSampleResult, setIsSampleResult] = useState(false);
+  const renderRequestId = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -65,9 +69,12 @@ function App() {
   }, [transcriptionUrl]);
 
   const handleFileAccepted = (nextFile: File) => {
+    renderRequestId.current++;
+    setSampleMode(false);
     setFile(nextFile);
     setCroppedFile(null);
     setTranscriptionUrl(null);
+    setIsSampleResult(false);
     setMessage('Select one staff or system crop before transcribing.');
   };
 
@@ -81,9 +88,12 @@ function App() {
       return;
     }
 
+    const requestId = ++renderRequestId.current;
+    setSampleMode(false);
     setIsTranscribing(true);
     setMessage('Reading notes and rhythms with Oemer...');
     setTranscriptionUrl(null);
+    setIsSampleResult(false);
     try {
       const formData = new FormData();
       formData.append('image', await prepareImageForGeneration(croppedFile));
@@ -98,31 +108,89 @@ function App() {
       const score = await response.json() as ScoreTranscription;
       const { renderTranscription } = await import('./transcription');
       const image = await renderTranscription(score, targetClef);
+      if (requestId !== renderRequestId.current) return;
       const detectedNotes = score.measures.reduce((sum, measure) =>
         sum + measure.notes.reduce((measureSum, note) => measureSum + (note.rest ? 0 : note.pitches.length), 0), 0);
       setTranscriptionUrl(URL.createObjectURL(image));
       setNoteCount(detectedNotes);
       setMessage(`Recognized ${detectedNotes} notes. Check the result against your original.`);
     } catch (error) {
+      if (requestId !== renderRequestId.current) return;
       setMessage(error instanceof Error ? error.message : 'Transcription failed. Please try another image.');
     } finally {
-      setIsTranscribing(false);
+      if (requestId === renderRequestId.current) setIsTranscribing(false);
     }
   };
 
+  useEffect(() => {
+    if (!sampleMode) return;
+
+    let cancelled = false;
+    const requestId = ++renderRequestId.current;
+    setTranscriptionUrl(null);
+    setIsSampleResult(false);
+    setNoteCount(0);
+    setMessage('Rendering sample score...');
+
+    const renderSample = async () => {
+      try {
+        const score: ScoreTranscription = {
+          timeSignature: '4/4',
+          measures: [{
+            notes: [sampleFirstNote, 'D4', 'E4', 'G4'].map((pitch) => ({
+              pitches: [pitch],
+              duration: 'quarter',
+              rest: false,
+            })),
+          }],
+        };
+        const { renderTranscription } = await import('./transcription');
+        const image = await renderTranscription(score, targetClef);
+        if (cancelled || requestId !== renderRequestId.current) return;
+        setTranscriptionUrl(URL.createObjectURL(image));
+        setNoteCount(score.measures[0].notes.length);
+        setIsSampleResult(true);
+        setMessage('Sample score rendered.');
+      } catch (error) {
+        if (cancelled || requestId !== renderRequestId.current) return;
+        setMessage(error instanceof Error ? error.message : 'Could not render the sample score.');
+      }
+    };
+
+    void renderSample();
+    return () => {
+      cancelled = true;
+    };
+  }, [sampleFirstNote, sampleMode, targetClef]);
+
+  const handleTrySample = () => {
+    if (sampleMode) return;
+    renderRequestId.current++;
+    setIsTranscribing(false);
+    setTranscriptionUrl(null);
+    setIsSampleResult(false);
+    setSampleMode(true);
+  };
+
   const removeImage = () => {
+    renderRequestId.current++;
+    setSampleMode(false);
     setFile(null);
     setCroppedFile(null);
     setTranscriptionUrl(null);
+    setIsSampleResult(false);
     setMessage('');
   };
 
   const resetAll = () => {
+    renderRequestId.current++;
+    setSampleMode(false);
     setFile(null);
     setCroppedFile(null);
     setSourceClef(DEFAULT_SOURCE);
     setTargetClef(DEFAULT_TARGET);
     setTranscriptionUrl(null);
+    setIsSampleResult(false);
     setMessage('');
   };
 
@@ -166,9 +234,18 @@ function App() {
 
           <div className="action-area">
             <TranscribeButton onClick={handleTranscribe} isLoading={isTranscribing} disabled={!file || !croppedFile} />
+            <div className="sample-score-controls">
+              <label className="select-field" htmlFor="sample-first-note">
+                <span>First sample note</span>
+                <select id="sample-first-note" value={sampleFirstNote} onChange={(event) => setSampleFirstNote(event.target.value)}>
+                  {['C4', 'D4', 'E4', 'F4', 'G4'].map((pitch) => <option key={pitch} value={pitch}>{pitch}</option>)}
+                </select>
+              </label>
+              <button className="sample-score-button" type="button" onClick={handleTrySample}>Try sample score</button>
+            </div>
             <p className="status-message" role="status" aria-live="polite">{message}</p>
           </div>
-          {transcriptionUrl && <TranscriptionResult imageUrl={transcriptionUrl} targetClef={targetClef} noteCount={noteCount} />}
+          {transcriptionUrl && <TranscriptionResult imageUrl={transcriptionUrl} targetClef={targetClef} noteCount={noteCount} isSample={isSampleResult} />}
         </section>
         <p className="privacy-note"><Upload size={14} aria-hidden="true" /> Your cropped image is sent to your configured Oemer service.</p>
       </main>
