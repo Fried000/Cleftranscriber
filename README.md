@@ -52,6 +52,20 @@ Service tests verify complete MusicXML preservation, timing checks, multipart up
 
 Vercel builds the Vite app and runs `api/transcribe.ts`; it cannot host Audiveris inside the static build. Run `omr-service` separately and set server-side `OMR_SERVICE_URL` and matching `OMR_SERVICE_TOKEN`. Use HTTPS and a private token when exposing the service. Development defaults are `http://127.0.0.1:8001` and `local-omr-secret`.
 
+`OMR_SERVICE_URL` accepts either the service base URL or its complete `/transcribe` URL. After changing Vercel environment variables, redeploy to apply them. Open `/api/omr-health` on the Vercel website to check the configured service without uploading music. A working configuration returns `{"status":"ok","engine":"Audiveris"}`; failures report configuration or reachability issues without disclosing the token.
+
+### GitHub Codespaces service URLs
+
+A URL ending in `-8001.app.github.dev` is a forwarded Codespaces port. Vercel does not have your GitHub browser session. An empty 404 from this host can mean the forwarded port is private, the Codespace is stopped, or the service is not listening.
+
+1. Keep the Codespace running and start the service there with `docker compose up --build -d omr`.
+2. In the Codespace editor choose **View → Terminal**, then **PORTS** in the bottom panel. If hidden, use the command palette and select **Ports: Focus on Ports View**.
+3. Add port `8001` if absent. Right-click it → **Port Visibility → Public**. The local service uses HTTP; Codespaces supplies HTTPS for the external URL.
+4. Check the forwarded URL's `/health` endpoint without a GitHub login. It must return the Audiveris JSON above.
+5. Set that forwarded base URL as Vercel's `OMR_SERVICE_URL`. Set the same `OMR_SERVICE_TOKEN` used by the Codespace service, then redeploy.
+
+The service still requires its bearer token for transcription after the port is public. Do not use the example development token for a public service. Codespaces forwarding only works while the Codespace and service are running; use an always-running container host for a persistent deployment. See [GitHub's port-forwarding documentation](https://docs.github.com/en/codespaces/developing-in-a-codespace/forwarding-ports-in-your-codespace).
+
 Recognition returns MusicXML plus note/measure counts and review warnings. It no longer reduces the score to a list of pitch names and duration labels, which discarded notation and caused incorrect-looking rhythms. The retained VexFlow renderer is used for the four-note sample only.
 
 [Audiveris](https://github.com/Audiveris/audiveris) is licensed under AGPL-3.0. [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay) is licensed under BSD-3-Clause. Audiveris is run as a separate, unmodified executable; its source and license are available at the linked project.

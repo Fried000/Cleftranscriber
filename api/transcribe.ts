@@ -1,6 +1,7 @@
 import { unlink, readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import formidable from 'formidable';
+import { omrEndpoints, omrFailure } from '../server/omr-service.ts';
 
 const CLEFS = ['treble', 'bass', 'alto', 'tenor'] as const;
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -35,6 +36,14 @@ export function createTranscriptionHandler(
       return;
     }
 
+    let endpoint: URL;
+    try {
+      endpoint = omrEndpoints(serviceUrl).transcription;
+    } catch (error) {
+      respondWithError(response, 503, error instanceof Error ? error.message : 'Invalid OMR service URL.');
+      return;
+    }
+
     let temporaryPath: string | undefined;
     try {
       const form = formidable({ maxFiles: 1, maxFileSize: MAX_FILE_SIZE, maxTotalFileSize: MAX_FILE_SIZE });
@@ -57,11 +66,11 @@ export function createTranscriptionHandler(
       const serviceForm = new FormData();
       serviceForm.append('file', new Blob([imageData], { type: uploadedImage.mimetype }), uploadedImage.originalFilename || 'score.png');
       serviceForm.append('source_clef', sourceClef);
-      const endpoint = `${serviceUrl.replace(/\/+$/, '')}/transcribe`;
       const serviceResponse = await fetch(endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${serviceToken}` },
         body: serviceForm,
+        redirect: 'manual',
         signal: AbortSignal.timeout(285_000),
       });
 
@@ -74,11 +83,8 @@ export function createTranscriptionHandler(
         engine?: string;
       } | null;
       if (!serviceResponse.ok) {
-        const status = serviceResponse.status === 401 ? 503 : serviceResponse.status;
-        const message = serviceResponse.status === 401
-          ? 'The OMR service rejected the server token. Check that OMR_SERVICE_TOKEN matches in the app and OMR service.'
-          : typeof serviceResult?.detail === 'string' ? serviceResult.detail
-          : `The OMR service returned HTTP ${serviceResponse.status} without a recognition result. Check OMR_SERVICE_URL and the service logs.`;
+        const status = [401, 403, 404, 405].includes(serviceResponse.status) || (serviceResponse.status >= 300 && serviceResponse.status < 400) ? 503 : serviceResponse.status;
+        const message = omrFailure(endpoint, serviceResponse.status, serviceResult?.detail);
         respondWithError(response, status, message);
         return;
       }
@@ -103,7 +109,7 @@ export function createTranscriptionHandler(
     } catch (error) {
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       console.error('Local OMR service request failed:', error instanceof Error ? error.message : 'Unknown error');
-      respondWithError(response, isTimeout ? 504 : 503, isTimeout ? 'OMR took too long. Crop a smaller staff region and try again.' : 'The local OMR service is unavailable. Start it with Docker Compose and try again.');
+      respondWithError(response, isTimeout ? 504 : 503, isTimeout ? 'OMR took too long. Crop a smaller staff region and try again.' : 'The OMR service is unavailable. Ensure the configured service is running and publicly reachable from Vercel.');
     } finally {
       if (temporaryPath) await unlink(temporaryPath).catch(() => undefined);
     }

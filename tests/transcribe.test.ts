@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
 import { test } from 'node:test';
-import { createTranscriptionHandler } from './transcribe.ts';
+import { createTranscriptionHandler } from '../api/transcribe.ts';
 
 async function listen(server: Server) {
   server.listen(0, '127.0.0.1');
@@ -36,11 +36,13 @@ test('production uploads retain the complete MusicXML and recognition warnings',
   });
   t.after(() => service.close());
   const serviceUrl = await listen(service);
-  const api = createServer(createTranscriptionHandler(serviceUrl, 'test-token', false));
-  t.after(() => api.close());
-  const response = await upload(await listen(api));
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), score);
+  for (const configuredUrl of [serviceUrl, `${serviceUrl}/transcribe/`]) {
+    const api = createServer(createTranscriptionHandler(configuredUrl, 'test-token', false));
+    t.after(() => api.close());
+    const response = await upload(await listen(api));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), score);
+  }
 });
 
 test('non-JSON upstream failure identifies service status instead of blaming the crop', async (t) => {
