@@ -5,6 +5,7 @@ services:
     environment:
       OMR_SERVICE_TOKEN: ${OMR_SERVICE_TOKEN:-local-omr-secret}
       OMR_TIMEOUT_SECONDS: ${OMR_TIMEOUT_SECONDS:-270}
+      OMR_MUSIC_FONT: ${OMR_MUSIC_FONT:-Leland}
     ports:
       - "127.0.0.1:8001:8001"
     healthcheck:

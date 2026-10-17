@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       {
-        name: 'local-oemer-transcription-api',
+        name: 'local-transcription-api',
         configureServer(server) {
           const handler = createTranscriptionHandler(
             env.OMR_SERVICE_URL || 'http://127.0.0.1:8001',

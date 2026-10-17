@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileImage, RotateCcw, Sparkles, Upload } from 'lucide-react';
 import Header from './components/Header';
 import ImagePreview from './components/ImagePreview';
@@ -7,6 +7,7 @@ import ClefSelector from './components/ClefSelector';
 import TranscribeButton from './components/TranscribeButton';
 import TranscriptionResult from './components/TranscriptionResult';
 import type { ScoreTranscription } from './transcription';
+import { renderMusicXml, type RecognizedScore } from './musicxml';
 import './transcription.css';
 
 const DEFAULT_SOURCE = 'treble';
@@ -60,7 +61,19 @@ function App() {
   const [sampleMode, setSampleMode] = useState(false);
   const [sampleFirstNote, setSampleFirstNote] = useState('C4');
   const [isSampleResult, setIsSampleResult] = useState(false);
+  const [recognition, setRecognition] = useState<RecognizedScore | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [renderedClef, setRenderedClef] = useState<Clef>(DEFAULT_TARGET);
   const renderRequestId = useRef(0);
+
+  const handleCropChange = useCallback((nextCrop: File | null) => {
+    renderRequestId.current++;
+    setCroppedFile(nextCrop);
+    setRecognition(null);
+    setWarnings([]);
+    setTranscriptionUrl(null);
+    setIsTranscribing(false);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -71,11 +84,14 @@ function App() {
   const handleFileAccepted = (nextFile: File) => {
     renderRequestId.current++;
     setSampleMode(false);
+    setRecognition(null);
+    setWarnings([]);
+    setIsTranscribing(false);
     setFile(nextFile);
     setCroppedFile(null);
     setTranscriptionUrl(null);
     setIsSampleResult(false);
-    setMessage('Select one staff or system crop before transcribing.');
+    setMessage('Transcribe the full image, or select a crop with complete staff systems.');
   };
 
   const handleTranscribe = async () => {
@@ -83,20 +99,17 @@ function App() {
       setMessage('Please upload an image first.');
       return;
     }
-    if (!croppedFile) {
-      setMessage('Crop one staff or system from the image first.');
-      return;
-    }
-
     const requestId = ++renderRequestId.current;
     setSampleMode(false);
     setIsTranscribing(true);
-    setMessage('Reading notes and rhythms with Oemer...');
+    setMessage('Reading the score with Audiveris. This may take a minute...');
+    setRecognition(null);
+    setWarnings([]);
     setTranscriptionUrl(null);
     setIsSampleResult(false);
     try {
       const formData = new FormData();
-      formData.append('image', await prepareImageForGeneration(croppedFile));
+      formData.append('image', await prepareImageForGeneration(croppedFile || file));
       formData.append('sourceClef', sourceClef);
       formData.append('targetClef', targetClef);
       const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
@@ -105,15 +118,10 @@ function App() {
         throw new Error(result?.error || 'Music recognition failed. Please try again.');
       }
 
-      const score = await response.json() as ScoreTranscription;
-      const { renderTranscription } = await import('./transcription');
-      const image = await renderTranscription(score, targetClef);
+      const score = await response.json() as RecognizedScore;
       if (requestId !== renderRequestId.current) return;
-      const detectedNotes = score.measures.reduce((sum, measure) =>
-        sum + measure.notes.reduce((measureSum, note) => measureSum + (note.rest ? 0 : note.pitches.length), 0), 0);
-      setTranscriptionUrl(URL.createObjectURL(image));
-      setNoteCount(detectedNotes);
-      setMessage(`Recognized ${detectedNotes} notes. Check the result against your original.`);
+      setRecognition(score);
+      setWarnings(score.warnings || []);
     } catch (error) {
       if (requestId !== renderRequestId.current) return;
       setMessage(error instanceof Error ? error.message : 'Transcription failed. Please try another image.');
@@ -121,6 +129,30 @@ function App() {
       if (requestId === renderRequestId.current) setIsTranscribing(false);
     }
   };
+
+  useEffect(() => {
+    if (!recognition || sampleMode) return;
+    let cancelled = false;
+    const requestId = ++renderRequestId.current;
+    setIsTranscribing(true);
+    setTranscriptionUrl(null);
+    setMessage('Engraving the complete MusicXML score...');
+    void (async () => {
+      try {
+        const image = await renderMusicXml(recognition.musicXml, targetClef);
+        if (cancelled || requestId !== renderRequestId.current) return;
+        setTranscriptionUrl(URL.createObjectURL(image));
+        setRenderedClef(targetClef);
+        setNoteCount(recognition.noteCount);
+        setMessage(`Read ${recognition.noteCount} notes in ${recognition.measureCount} measures.${recognition.warnings.length ? ' Some measures need review below.' : ' Compare with your source before using the score.'}`);
+      } catch (error) {
+        if (!cancelled && requestId === renderRequestId.current) setMessage(error instanceof Error ? error.message : 'Could not engrave the score.');
+      } finally {
+        if (!cancelled && requestId === renderRequestId.current) setIsTranscribing(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [recognition, sampleMode, targetClef]);
 
   useEffect(() => {
     if (!sampleMode) return;
@@ -150,6 +182,7 @@ function App() {
         setTranscriptionUrl(URL.createObjectURL(image));
         setNoteCount(score.measures[0].notes.length);
         setIsSampleResult(true);
+        setRenderedClef(targetClef);
         setMessage('Sample score rendered.');
       } catch (error) {
         if (cancelled || requestId !== renderRequestId.current) return;
@@ -170,11 +203,16 @@ function App() {
     setTranscriptionUrl(null);
     setIsSampleResult(false);
     setSampleMode(true);
+    setRecognition(null);
+    setWarnings([]);
   };
 
   const removeImage = () => {
     renderRequestId.current++;
     setSampleMode(false);
+    setRecognition(null);
+    setWarnings([]);
+    setIsTranscribing(false);
     setFile(null);
     setCroppedFile(null);
     setTranscriptionUrl(null);
@@ -185,6 +223,9 @@ function App() {
   const resetAll = () => {
     renderRequestId.current++;
     setSampleMode(false);
+    setRecognition(null);
+    setWarnings([]);
+    setIsTranscribing(false);
     setFile(null);
     setCroppedFile(null);
     setSourceClef(DEFAULT_SOURCE);
@@ -215,7 +256,7 @@ function App() {
           </div>
 
           {file ? (
-            <ImagePreview file={file} onRemove={removeImage} onCropChange={setCroppedFile} />
+            <ImagePreview file={file} onRemove={removeImage} onCropChange={handleCropChange} />
           ) : (
             <ImageUploader onFileAccepted={handleFileAccepted} onError={setMessage} />
           )}
@@ -233,7 +274,7 @@ function App() {
           </div>
 
           <div className="action-area">
-            <TranscribeButton onClick={handleTranscribe} isLoading={isTranscribing} disabled={!file || !croppedFile} />
+            <TranscribeButton onClick={handleTranscribe} isLoading={isTranscribing} disabled={!file} />
             <div className="sample-score-controls">
               <label className="select-field" htmlFor="sample-first-note">
                 <span>First sample note</span>
@@ -245,11 +286,12 @@ function App() {
             </div>
             <p className="status-message" role="status" aria-live="polite">{message}</p>
           </div>
-          {transcriptionUrl && <TranscriptionResult imageUrl={transcriptionUrl} targetClef={targetClef} noteCount={noteCount} isSample={isSampleResult} />}
+          {warnings.length > 0 && <div className="recognition-warnings" role="status"><strong>Recognition needs review</strong>{warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
+          {transcriptionUrl && <TranscriptionResult imageUrl={transcriptionUrl} targetClef={renderedClef} noteCount={noteCount} isSample={isSampleResult} musicXml={recognition?.musicXml} />}
         </section>
-        <p className="privacy-note"><Upload size={14} aria-hidden="true" /> Your cropped image is sent to your configured Oemer service.</p>
+        <p className="privacy-note"><Upload size={14} aria-hidden="true" /> Your image is processed by your configured Audiveris service.</p>
       </main>
-      <footer>Clef Transcriber <span>Oemer OMR · VexFlow engraving</span></footer>
+      <footer>Clef Transcriber <span>Audiveris OMR · MusicXML engraving</span></footer>
     </div>
   );
 }

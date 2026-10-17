@@ -5,10 +5,6 @@ import formidable from 'formidable';
 const CLEFS = ['treble', 'bass', 'alto', 'tenor'] as const;
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const DURATION_VALUES = new Set([
-  'whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirty_second', 'sixty_fourth',
-  'dotted_whole', 'dotted_half', 'dotted_quarter', 'dotted_eighth', 'dotted_sixteenth', 'dotted_thirty_second', 'dotted_sixty_fourth',
-]);
 
 type Clef = typeof CLEFS[number];
 
@@ -22,39 +18,15 @@ function respondWithError(response: ServerResponse, status: number, message: str
   response.end(JSON.stringify({ error: message }));
 }
 
-type NoteEvent = {
-  pitches: string[];
-  duration: string;
-  rest: boolean;
-};
-
-type ScoreTranscription = {
-  timeSignature: string;
-  measures: { notes: NoteEvent[] }[];
-};
-
-function isScoreTranscription(value: unknown): value is ScoreTranscription {
-  if (!value || typeof value !== 'object') return false;
-  const score = value as Partial<ScoreTranscription>;
-  if (typeof score.timeSignature !== 'string' || !/^\d{1,2}\/\d{1,2}$/.test(score.timeSignature)) return false;
-  if (!Array.isArray(score.measures) || score.measures.length === 0 || score.measures.length > 128) return false;
-
-  return score.measures.every((measure) => Array.isArray(measure.notes) && measure.notes.length <= 32 && measure.notes.every((note) =>
-    Array.isArray(note.pitches) && note.pitches.length <= 8 && typeof note.duration === 'string' && DURATION_VALUES.has(note.duration) &&
-    typeof note.rest === 'boolean' && note.pitches.every((pitch) => typeof pitch === 'string' && /^[A-G](?:#{1,2}|B{1,2})?-?\d+$/.test(pitch)) &&
-    (note.rest || note.pitches.length > 0),
-  ));
-}
-
 export function createTranscriptionHandler(
   serviceUrl?: string,
   serviceToken?: string,
-  includeDebug = process.env.NODE_ENV !== 'production',
+  _includeDebug = process.env.NODE_ENV !== 'production',
 ) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     if (request.method !== 'POST') {
       response.setHeader('Allow', 'POST');
-      respondWithError(response, 405, 'Use POST to generate a sheet image.');
+      respondWithError(response, 405, 'Use POST to transcribe sheet music.');
       return;
     }
 
@@ -94,28 +66,40 @@ export function createTranscriptionHandler(
       });
 
       const serviceResult = await serviceResponse.json().catch(() => null) as {
-        detail?: string;
-        transcription?: unknown;
+        detail?: unknown;
         musicXml?: string;
+        noteCount?: number;
+        measureCount?: number;
+        warnings?: string[];
+        engine?: string;
       } | null;
       if (!serviceResponse.ok) {
         const status = serviceResponse.status === 401 ? 503 : serviceResponse.status;
-        const message = serviceResult?.detail || 'The local OMR service could not process this crop.';
+        const message = serviceResponse.status === 401
+          ? 'The OMR service rejected the server token. Check that OMR_SERVICE_TOKEN matches in the app and OMR service.'
+          : typeof serviceResult?.detail === 'string' ? serviceResult.detail
+          : `The OMR service returned HTTP ${serviceResponse.status} without a recognition result. Check OMR_SERVICE_URL and the service logs.`;
         respondWithError(response, status, message);
         return;
       }
 
-      const transcription = serviceResult?.transcription;
-      if (!isScoreTranscription(transcription)) {
-        respondWithError(response, 502, 'The local OMR service returned an invalid score structure.');
+      if (typeof serviceResult?.musicXml !== 'string' || serviceResult.musicXml.length > 8_000_000 ||
+          !serviceResult.musicXml.includes('<score-partwise') ||
+          !Number.isInteger(serviceResult.noteCount) || serviceResult.noteCount! <= 0 ||
+          !Number.isInteger(serviceResult.measureCount) || serviceResult.measureCount! <= 0) {
+        respondWithError(response, 502, 'The OMR service did not return complete MusicXML. Rebuild the OMR service to update it.');
         return;
       }
       response.statusCode = 200;
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Cache-Control', 'no-store');
-      response.end(JSON.stringify(includeDebug
-        ? { ...transcription, debug: { rawMusicXML: serviceResult?.musicXml || '', parsed: transcription } }
-        : transcription));
+      response.end(JSON.stringify({
+        musicXml: serviceResult.musicXml,
+        noteCount: serviceResult.noteCount,
+        measureCount: serviceResult.measureCount,
+        warnings: Array.isArray(serviceResult.warnings) ? serviceResult.warnings.filter((warning) => typeof warning === 'string') : [],
+        engine: typeof serviceResult.engine === 'string' ? serviceResult.engine : 'OMR',
+      }));
     } catch (error) {
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       console.error('Local OMR service request failed:', error instanceof Error ? error.message : 'Unknown error');

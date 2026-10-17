@@ -1,4 +1,4 @@
-import { Accidental, Barline, Formatter, Renderer, Stave, StaveNote, Voice } from 'vexflow/bravura';
+import { Accidental, Barline, Dot, Formatter, Renderer, Stave, StaveNote, Voice } from 'vexflow/bravura';
 import type { Clef } from './App';
 
 export type NoteEvent = {
@@ -39,7 +39,7 @@ const DURATION_WIDTH: Record<string, number> = {
 };
 
 function vexKey(pitch: string) {
-  const match = pitch.match(/^([A-G])(#{1,2}|B{1,2})?(-?\d+)$/);
+  const match = pitch.match(/^([A-G])(#{1,2}|b{1,2}|B{1,2})?(-?\d+)$/);
   if (!match) throw new Error(`Unrecognized pitch: ${pitch}`);
   const accidental = match[2]?.replace(/B/g, 'b') ?? '';
   return `${match[1].toLowerCase()}${accidental}/${match[3]}`;
@@ -83,12 +83,36 @@ export async function renderTranscription(score: ScoreTranscription, clef: Clef)
   }
   if (currentSystem.measureIndexes.length) systems.push(currentSystem);
 
-  const systemHeight = 230;
-  const height = 100 + systems.length * systemHeight;
+  const bottomPitch = { treble: 4 * 7 + 2, bass: 2 * 7 + 4, alto: 3 * 7 + 3, tenor: 3 * 7 + 1 }[clef];
+  let nextSystemTop = 110;
+  const systemPositions = systems.map((system) => {
+    let minOffset = 10;
+    let maxOffset = 130;
+    for (const index of system.measureIndexes) {
+      for (const note of measures[index].notes) {
+        if (note.rest) continue;
+        for (const pitch of note.pitches) {
+          const match = pitch.match(/^([A-G])(?:#{1,2}|b{1,2}|B{1,2})?(-?\d+)$/);
+          if (!match) continue;
+          const position = Number(match[2]) * 7 + 'CDEFGAB'.indexOf(match[1]) - bottomPitch;
+          const noteOffset = 80 - position * 5;
+          minOffset = Math.min(minOffset, noteOffset - 55);
+          maxOffset = Math.max(maxOffset, noteOffset + 55);
+        }
+      }
+    }
+    const y = nextSystemTop - minOffset;
+    nextSystemTop = y + maxOffset + 70;
+    return y;
+  });
+  const height = nextSystemTop;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
 
+  const renderer = new Renderer(canvas, Renderer.Backends.CANVAS);
+  renderer.resize(width, height);
+  const context = renderer.getContext();
   const background = canvas.getContext('2d');
   if (!background) throw new Error('Your browser could not create the score image.');
   background.fillStyle = '#fff';
@@ -99,10 +123,8 @@ export async function renderTranscription(score: ScoreTranscription, clef: Clef)
   background.fillStyle = '#6f7b77';
   background.font = '14px Arial, sans-serif';
   background.fillText(`${clef.toUpperCase()} clef · ${score.timeSignature} · ${measures.length} measures`, 44, 66);
-
-  const renderer = new Renderer(canvas, Renderer.Backends.CANVAS);
-  renderer.resize(width, height);
-  const context = renderer.getContext();
+  context.setFillStyle('#151a19');
+  context.setStrokeStyle('#151a19');
 
   const drawRhythmWarning = (x: number, y: number, measureWidth: number) => {
     background.save();
@@ -128,7 +150,7 @@ export async function renderTranscription(score: ScoreTranscription, clef: Clef)
     const measure = measures[measureIndex];
     const measureWidth = system.widths[measureInSystem];
     const isFirstInSystem = measureInSystem === 0;
-    const y = 90 + systemIndex * systemHeight;
+    const y = systemPositions[systemIndex];
     const stave = new Stave(x, y, measureWidth);
     stave.setBegBarType(isFirstInSystem ? Barline.type.SINGLE : Barline.type.NONE);
     stave.setEndBarType(Barline.type.SINGLE);
@@ -140,14 +162,20 @@ export async function renderTranscription(score: ScoreTranscription, clef: Clef)
       if (!duration) throw new Error(`Unsupported note duration: ${note.duration}`);
       const keys = note.rest ? ['b/4'] : note.pitches.map(vexKey);
       const staveNote = new StaveNote({ keys, duration: note.rest ? `${duration}r` : duration, clef });
+      if (note.duration.startsWith('dotted_')) Dot.buildAndAttach([staveNote], { all: true });
       if (!note.rest) {
         note.pitches.forEach((pitch, pitchIndex) => {
-          const accidental = pitch.match(/^[A-G]([#B])/)?.[1];
-          if (accidental) staveNote.addModifier(new Accidental(accidental === '#' ? '#' : 'b'), pitchIndex);
+          const accidental = pitch.match(/^[A-G](#{1,2}|b{1,2}|B{1,2})/)?.[1];
+          if (accidental) staveNote.addModifier(new Accidental(accidental.replace(/B/g, 'b')), pitchIndex);
         });
       }
       return staveNote;
     });
+    if (staveNotes.length === 0) {
+      drawRhythmWarning(x, y, measureWidth);
+      x += measureWidth;
+      return;
+    }
     const voice = new Voice({ numBeats, beatValue }).setMode(Voice.Mode.SOFT).addTickables(staveNotes);
     const durationMatches = voice.getTicksUsed().equals(voice.getTotalTicks());
     const formatter = new Formatter();

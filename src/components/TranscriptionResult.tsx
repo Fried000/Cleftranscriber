@@ -1,13 +1,24 @@
 import { Download } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { changeClef } from '../musicxml';
+import type { Clef } from '../App';
 
 type TranscriptionResultProps = {
   imageUrl: string;
   targetClef: string;
   noteCount: number;
   isSample: boolean;
+  musicXml?: string;
 };
 
-function TranscriptionResult({ imageUrl, targetClef, noteCount, isSample }: TranscriptionResultProps) {
+function TranscriptionResult({ imageUrl, targetClef, noteCount, isSample, musicXml }: TranscriptionResultProps) {
+  const [xmlUrl, setXmlUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!musicXml || isSample) { setXmlUrl(null); return; }
+    const url = URL.createObjectURL(new Blob([changeClef(musicXml, targetClef as Clef)], { type: 'application/vnd.recordare.musicxml+xml' }));
+    setXmlUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [musicXml, targetClef, isSample]);
   return (
     <section className="transcription-result" aria-labelledby="result-title">
       <div className="result-heading">
@@ -20,11 +31,12 @@ function TranscriptionResult({ imageUrl, targetClef, noteCount, isSample }: Tran
           <span>Download PNG</span>
         </a>
       </div>
+      {xmlUrl && <p><a href={xmlUrl} download="transcribed-score.musicxml">Download editable MusicXML</a></p>}
       {isSample && <p className="sample-score-label">Sample score — automatic recognition not used.</p>}
       <div className="result-image-frame">
-        <img src={imageUrl} alt={`${isSample ? 'Sample sheet music' : 'AI-generated sheet music'} with the requested ${targetClef} clef`} />
+        <img src={imageUrl} alt={`${isSample ? 'Sample sheet music' : 'Transcribed sheet music'} with the requested ${targetClef} clef`} />
       </div>
-      <p className="result-caption">{isSample ? `${noteCount} notes · ${targetClef} clef` : `Gemini identified ${noteCount} notes · ${targetClef} clef · verify the result against the source`}</p>
+      <p className="result-caption">{isSample ? `${noteCount} notes · ${targetClef} clef` : `${noteCount} recognized notes · ${targetClef} clef · recognized pitches and notation retained; compare with the source`}</p>
     </section>
   );
 }

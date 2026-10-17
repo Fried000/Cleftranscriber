@@ -5,3 +5,7 @@ vite.config.js
 vite.config.d.ts
 .env.local
 __pycache__/
+.venv/
+.test-deps/
+.test-output/
+.pnpm-store/

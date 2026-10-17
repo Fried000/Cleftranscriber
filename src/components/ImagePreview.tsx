@@ -151,7 +151,7 @@ function ImagePreview({ file, onRemove, onCropChange }: ImagePreviewProps) {
         <div className="preview-frame"><img src={croppedUrl} alt={`Selected crop from ${file.name}`} /><div className="preview-watermark"><ImageOff size={14} aria-hidden="true" /> Selected crop</div></div>
       ) : (
         <>
-          <p className="crop-instruction">Drag over one staff to select the area for transcription.</p>
+          <p className="crop-instruction">Use the full image, or select complete staff systems including clefs and ledger notes.</p>
           <div
             ref={stageRef}
             className="crop-stage"
@@ -174,7 +174,7 @@ function ImagePreview({ file, onRemove, onCropChange }: ImagePreviewProps) {
         ) : (
           <button className="secondary-button" type="button" onClick={applyCrop} disabled={!selection || selection.width < 0.02 || selection.height < 0.02}><Crop size={16} aria-hidden="true" /> Crop Selected Area</button>
         )}
-        <p className="crop-status" role="status">{cropError || (croppedFile ? 'Selected region will be sent for recognition.' : 'Select a region before transcribing.')}</p>
+        <p className="crop-status" role="status">{cropError || (croppedFile ? 'Selected region will be sent for recognition.' : 'The full image will be used unless you apply a crop.')}</p>
       </div>
       <button className="remove-button" type="button" onClick={onRemove}>Remove Image</button>
     </div>
