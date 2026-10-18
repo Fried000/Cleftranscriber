@@ -214,9 +214,11 @@ function App() {
 
           <div className="octave-controls" role="group" aria-label="Octave transposition">
             <span>Octave</span>
+            <button type="button" onClick={() => setOctaveShift((value) => value - 2)} disabled={octaveShift < -1} aria-label="Transpose down two octaves">−2 octaves</button>
             <button type="button" onClick={() => setOctaveShift((value) => Math.max(-3, value - 1))} disabled={octaveShift <= -3} aria-label="Transpose down one octave">−1 octave</button>
             <output aria-live="polite">{octaveShift === 0 ? 'Original' : `${octaveShift > 0 ? '+' : ''}${octaveShift} octave${Math.abs(octaveShift) === 1 ? '' : 's'}`}</output>
             <button type="button" onClick={() => setOctaveShift((value) => Math.min(3, value + 1))} disabled={octaveShift >= 3} aria-label="Transpose up one octave">+1 octave</button>
+            <button type="button" onClick={() => setOctaveShift((value) => value + 2)} disabled={octaveShift > 1} aria-label="Transpose up two octaves">+2 octaves</button>
           </div>
           <p className="octave-hint">Lower or raise all notes together to fit your reading range. Notes beyond the staff use ledger lines.</p>
 
