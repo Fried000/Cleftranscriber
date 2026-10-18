@@ -8,6 +8,7 @@ from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 from PIL import Image, ImageDraw
 
 from app import app, prepare_crop, recognize
@@ -38,6 +39,34 @@ class ScoreTests(unittest.TestCase):
     def test_tuplet_and_grace_notation_is_not_reduced_to_duration_names(self):
         data = XML.replace(b'<type>half</type>', b'<type>half</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>')
         self.assertEqual(inspect_score(data)['musicXml'].encode(), data)
+
+    def test_flags_wrong_rest_symbol_even_when_bar_adds_up(self):
+        data = XML.replace(b'<rest/><duration>1</duration><type>eighth</type>',
+                           b'<rest/><duration>1</duration><type>quarter</type>')
+        result = inspect_score(data)
+        self.assertTrue(any('Printed rhythm' in warning for warning in result['warnings']))
+        self.assertEqual(result['musicXml'].encode(), data)
+
+    def test_valid_tuplets_are_not_flagged(self):
+        notes = b''.join(b'<note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>eighth</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification></note>' for _ in range(12))
+        data = b'<score-partwise><part id="P1"><measure number="1"><attributes><divisions>3</divisions></attributes>' + notes + b'</measure></part></score-partwise>'
+        self.assertEqual(inspect_score(data)['warnings'], [])
+
+    def test_flags_missing_rest_represented_as_forward(self):
+        data = XML.replace(b'<note><rest/><duration>1</duration><type>eighth</type></note>',
+                           b'<forward><duration>1</duration></forward>')
+        self.assertTrue(any('time gaps' in warning for warning in inspect_score(data)['warnings']))
+
+    def test_additive_time_signature(self):
+        data = XML.replace(b'<beats>4</beats><beat-type>4</beat-type>', b'<beats>3+5</beats><beat-type>8</beat-type>')
+        self.assertEqual(inspect_score(data)['warnings'], [])
+
+    def test_chord_longer_than_first_note_counts_toward_bar_end(self):
+        data = b'''<score-partwise><part id="P1"><measure number="1">
+        <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+        <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+        </measure></part></score-partwise>'''
+        self.assertEqual(inspect_score(data)['warnings'], [])
 
 
 class UploadTests(unittest.TestCase):
@@ -80,6 +109,33 @@ class CropTests(unittest.TestCase):
             prepare_crop(data.getvalue(), path)
             with Image.open(path) as prepared:
                 self.assertEqual(prepared.size, (2464, 784))
+
+    def test_does_not_shrink_large_page_and_small_rest_details(self):
+        image = Image.new('RGB', (6100, 150), 'white')
+        data = io.BytesIO()
+        image.save(data, format='PNG')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'score.png'
+            prepare_crop(data.getvalue(), path)
+            with Image.open(path) as prepared:
+                self.assertEqual(prepared.size, (6164, 214))
+
+    @patch('app.subprocess.run')
+    def test_distinguishes_missing_exports_from_split_scores(self, run):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / 'Audiveris.exe'
+            executable.touch()
+            run.return_value = subprocess.CompletedProcess([], 0, '', '')
+            with patch.dict('os.environ', {'AUDIVERIS_BIN': str(executable)}):
+                with self.assertRaises(HTTPException) as missing:
+                    recognize(root / 'score.png', root)
+                self.assertIn('could not export', missing.exception.detail)
+                (root / 'one.musicxml').write_bytes(XML)
+                (root / 'two.musicxml').write_bytes(XML)
+                with self.assertRaises(HTTPException) as split:
+                    recognize(root / 'score.png', root)
+                self.assertIn('2 separate scores', split.exception.detail)
 
     @patch('app.subprocess.run')
     def test_runs_headless_and_returns_musicxml_with_engine_warnings(self, run):

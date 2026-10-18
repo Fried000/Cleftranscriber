@@ -36,7 +36,9 @@ def prepare_crop(image_data, image_path):
         gaps = np.diff(centers)
         gaps = gaps[(gaps >= 3) & (gaps <= 40)]
         spacing = float(np.median(gaps)) if len(gaps) >= 4 else 12
-        scale = min(4, max(1, 24 / spacing), 6000 / max(image.size))
+        # Cap enlargement, but never shrink a high-resolution source page:
+        # downsampling can erase eighth-rest hooks, dots and flags.
+        scale = max(1, min(4, 24 / spacing, 6000 / max(image.size)))
         image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
         ImageOps.expand(image, border=32, fill='white').save(image_path, format='PNG')
 
@@ -64,8 +66,12 @@ def recognize(image_path, output_dir):
         logger.warning('Audiveris failed: %s', logs[-6000:])
         raise HTTPException(status_code=422, detail='The notation could not be read. Include complete staff systems and their clefs in the image.')
     files = sorted(output_dir.rglob('*.mxl')) or sorted(output_dir.rglob('*.musicxml'))
-    if len(files) != 1:
-        raise HTTPException(status_code=422, detail='Recognition did not produce one complete score. Select the melody part and try again.')
+    if not files:
+        logger.warning('Audiveris produced no score export: %s', logs[-6000:])
+        raise HTTPException(status_code=422, detail='The recognition engine could not export a score from this image. Try one complete staff system with its clef and time signature, at the original image resolution.')
+    if len(files) > 1:
+        logger.warning('Audiveris split the image into %d score exports.', len(files))
+        raise HTTPException(status_code=422, detail=f'The recognition engine split this image into {len(files)} separate scores. Upload one continuous score or crop one complete staff system at a time.')
     uncertain = sorted(set(re.findall(r'MeasureStack#(\d+) no correct rhythm', logs)), key=int)
     return read_score(files[0]), uncertain
 

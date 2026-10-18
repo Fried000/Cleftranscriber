@@ -21,25 +21,27 @@ async function prepareImageForGeneration(file: File) {
 
   const bitmap = await createImageBitmap(file);
   try {
-    let scale = Math.min(1, 2800 / bitmap.width, 2800 / bitmap.height);
+    let scale = 1;
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Could not prepare this image for upload.');
 
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 8; attempt++) {
       canvas.width = Math.max(1, Math.round(bitmap.width * scale));
       canvas.height = Math.max(1, Math.round(bitmap.height * scale));
       context.fillStyle = '#fff';
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      const quality = Math.max(0.67, 0.92 - attempt * 0.05);
+      // Try lossless PNG at source resolution before any lossy compression.
+      // Small rest hooks and flags must survive upload preparation.
+      const format = attempt === 0 ? 'image/png' : 'image/jpeg';
       const compressed = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not compress this image.')), 'image/jpeg', quality);
+        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not compress this image.')), format, 0.97);
       });
       if (compressed.size <= MAX_API_IMAGE_SIZE) {
-        return new File([compressed], 'sheet-music.jpg', { type: 'image/jpeg' });
+        return new File([compressed], format === 'image/png' ? 'sheet-music.png' : 'sheet-music.jpg', { type: format });
       }
-      scale *= 0.8;
+      if (attempt > 0) scale *= 0.9;
     }
 
     throw new Error('This image could not be reduced enough to send. Choose a smaller image.');
