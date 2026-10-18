@@ -8,11 +8,12 @@ export type RecognizedScore = {
   engine: string;
 };
 
-export function changeClef(musicXml: string, target: Clef): string {
+export function changeClef(musicXml: string, target: Clef, octaveShift = 0): string {
   const xml = new DOMParser().parseFromString(musicXml, 'application/xml');
   if (xml.querySelector('parsererror') || xml.documentElement.localName !== 'score-partwise') {
     throw new Error('Recognition returned unreadable MusicXML.');
   }
+  if (!Number.isInteger(octaveShift) || Math.abs(octaveShift) > 3) throw new Error('Choose an octave shift between −3 and +3.');
   const [sign, line] = { treble: ['G', '2'], bass: ['F', '4'], alto: ['C', '3'], tenor: ['C', '4'] }[target];
   for (const part of xml.querySelectorAll('score-partwise > part')) {
     let clefs = Array.from(part.querySelectorAll('attributes > clef'));
@@ -37,11 +38,23 @@ export function changeClef(musicXml: string, target: Clef): string {
       clef.append(signNode, lineNode);
     }
   }
-  // Pitches, durations, accidentals, beams, voices, ties and slurs stay intact.
+  for (const octave of xml.querySelectorAll('note > pitch > octave')) {
+    const shifted = Number(octave.textContent) + octaveShift;
+    if (!Number.isInteger(shifted) || shifted < 0 || shifted > 9) {
+      throw new Error('This octave shift puts notes outside the supported pitch range. Choose a smaller shift.');
+    }
+    octave.textContent = String(shifted);
+  }
+  // Imported coordinates belong to the source clef. Re-engrave notes and rests.
+  for (const note of xml.querySelectorAll('note')) {
+    for (const attribute of ['default-x', 'default-y', 'relative-x', 'relative-y']) note.removeAttribute(attribute);
+    for (const position of note.querySelectorAll('rest > display-step, rest > display-octave, stem')) position.remove();
+  }
+  // Preserve durations, accidentals, beams, voices, ties and slurs.
   return new XMLSerializer().serializeToString(xml);
 }
 
-export async function renderMusicXml(musicXml: string, clef: Clef): Promise<Blob> {
+export async function renderMusicXml(musicXml: string, clef: Clef, octaveShift = 0): Promise<Blob> {
   const { OpenSheetMusicDisplay } = await import('opensheetmusicdisplay');
   const host = document.createElement('div');
   Object.assign(host.style, { position: 'absolute', left: '-100000px', top: '0', width: '1400px' });
@@ -54,7 +67,7 @@ export async function renderMusicXml(musicXml: string, clef: Clef): Promise<Blob
       newSystemFromXML: true, autoBeam: false,
       setWantedStemDirectionByXml: false, pageBackgroundColor: '#ffffff',
     });
-    await display.load(changeClef(musicXml, clef));
+    await display.load(changeClef(musicXml, clef, octaveShift));
     await document.fonts.ready;
     display.render();
     const pages = Array.from(host.querySelectorAll('canvas'));

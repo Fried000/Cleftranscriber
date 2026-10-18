@@ -6,7 +6,6 @@ import ImageUploader from './components/ImageUploader';
 import ClefSelector from './components/ClefSelector';
 import TranscribeButton from './components/TranscribeButton';
 import TranscriptionResult from './components/TranscriptionResult';
-import type { ScoreTranscription } from './transcription';
 import { renderMusicXml, type RecognizedScore } from './musicxml';
 import './transcription.css';
 
@@ -58,9 +57,8 @@ function App() {
   const [transcriptionUrl, setTranscriptionUrl] = useState<string | null>(null);
   const [noteCount, setNoteCount] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [sampleMode, setSampleMode] = useState(false);
-  const [sampleFirstNote, setSampleFirstNote] = useState('C4');
-  const [isSampleResult, setIsSampleResult] = useState(false);
+  const [octaveShift, setOctaveShift] = useState(0);
+  const [renderedOctaveShift, setRenderedOctaveShift] = useState(0);
   const [recognition, setRecognition] = useState<RecognizedScore | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [renderedClef, setRenderedClef] = useState<Clef>(DEFAULT_TARGET);
@@ -83,14 +81,12 @@ function App() {
 
   const handleFileAccepted = (nextFile: File) => {
     renderRequestId.current++;
-    setSampleMode(false);
     setRecognition(null);
     setWarnings([]);
     setIsTranscribing(false);
     setFile(nextFile);
     setCroppedFile(null);
     setTranscriptionUrl(null);
-    setIsSampleResult(false);
     setMessage('Transcribe the full image, or select a crop with complete staff systems.');
   };
 
@@ -100,13 +96,11 @@ function App() {
       return;
     }
     const requestId = ++renderRequestId.current;
-    setSampleMode(false);
     setIsTranscribing(true);
     setMessage('Reading the score with Audiveris. This may take a minute...');
     setRecognition(null);
     setWarnings([]);
     setTranscriptionUrl(null);
-    setIsSampleResult(false);
     try {
       const formData = new FormData();
       formData.append('image', await prepareImageForGeneration(croppedFile || file));
@@ -131,7 +125,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (!recognition || sampleMode) return;
+    if (!recognition) return;
     let cancelled = false;
     const requestId = ++renderRequestId.current;
     setIsTranscribing(true);
@@ -139,10 +133,11 @@ function App() {
     setMessage('Engraving the complete MusicXML score...');
     void (async () => {
       try {
-        const image = await renderMusicXml(recognition.musicXml, targetClef);
+        const image = await renderMusicXml(recognition.musicXml, targetClef, octaveShift);
         if (cancelled || requestId !== renderRequestId.current) return;
         setTranscriptionUrl(URL.createObjectURL(image));
         setRenderedClef(targetClef);
+        setRenderedOctaveShift(octaveShift);
         setNoteCount(recognition.noteCount);
         setMessage(`Read ${recognition.noteCount} notes in ${recognition.measureCount} measures.${recognition.warnings.length ? ' Some measures need review below.' : ' Compare with your source before using the score.'}`);
       } catch (error) {
@@ -152,77 +147,21 @@ function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [recognition, sampleMode, targetClef]);
-
-  useEffect(() => {
-    if (!sampleMode) return;
-
-    let cancelled = false;
-    const requestId = ++renderRequestId.current;
-    setTranscriptionUrl(null);
-    setIsSampleResult(false);
-    setNoteCount(0);
-    setMessage('Rendering sample score...');
-
-    const renderSample = async () => {
-      try {
-        const score: ScoreTranscription = {
-          timeSignature: '4/4',
-          measures: [{
-            notes: [sampleFirstNote, 'D4', 'E4', 'G4'].map((pitch) => ({
-              pitches: [pitch],
-              duration: 'quarter',
-              rest: false,
-            })),
-          }],
-        };
-        const { renderTranscription } = await import('./transcription');
-        const image = await renderTranscription(score, targetClef);
-        if (cancelled || requestId !== renderRequestId.current) return;
-        setTranscriptionUrl(URL.createObjectURL(image));
-        setNoteCount(score.measures[0].notes.length);
-        setIsSampleResult(true);
-        setRenderedClef(targetClef);
-        setMessage('Sample score rendered.');
-      } catch (error) {
-        if (cancelled || requestId !== renderRequestId.current) return;
-        setMessage(error instanceof Error ? error.message : 'Could not render the sample score.');
-      }
-    };
-
-    void renderSample();
-    return () => {
-      cancelled = true;
-    };
-  }, [sampleFirstNote, sampleMode, targetClef]);
-
-  const handleTrySample = () => {
-    if (sampleMode) return;
-    renderRequestId.current++;
-    setIsTranscribing(false);
-    setTranscriptionUrl(null);
-    setIsSampleResult(false);
-    setSampleMode(true);
-    setRecognition(null);
-    setWarnings([]);
-  };
+  }, [recognition, targetClef, octaveShift]);
 
   const removeImage = () => {
     renderRequestId.current++;
-    setSampleMode(false);
     setRecognition(null);
     setWarnings([]);
     setIsTranscribing(false);
     setFile(null);
     setCroppedFile(null);
     setTranscriptionUrl(null);
-    setIsSampleResult(false);
     setMessage('');
   };
 
   const resetAll = () => {
     renderRequestId.current++;
-    setSampleMode(false);
     setRecognition(null);
     setWarnings([]);
     setIsTranscribing(false);
@@ -230,8 +169,8 @@ function App() {
     setCroppedFile(null);
     setSourceClef(DEFAULT_SOURCE);
     setTargetClef(DEFAULT_TARGET);
+    setOctaveShift(0);
     setTranscriptionUrl(null);
-    setIsSampleResult(false);
     setMessage('');
   };
 
@@ -273,21 +212,20 @@ function App() {
             <ClefSelector id="target-clef" label="Target Clef" value={targetClef} onChange={setTargetClef} />
           </div>
 
+          <div className="octave-controls" role="group" aria-label="Octave transposition">
+            <span>Octave</span>
+            <button type="button" onClick={() => setOctaveShift((value) => Math.max(-3, value - 1))} disabled={octaveShift <= -3} aria-label="Transpose down one octave">−1 octave</button>
+            <output aria-live="polite">{octaveShift === 0 ? 'Original' : `${octaveShift > 0 ? '+' : ''}${octaveShift} octave${Math.abs(octaveShift) === 1 ? '' : 's'}`}</output>
+            <button type="button" onClick={() => setOctaveShift((value) => Math.min(3, value + 1))} disabled={octaveShift >= 3} aria-label="Transpose up one octave">+1 octave</button>
+          </div>
+          <p className="octave-hint">Lower or raise all notes together to fit your reading range. Notes beyond the staff use ledger lines.</p>
+
           <div className="action-area">
             <TranscribeButton onClick={handleTranscribe} isLoading={isTranscribing} disabled={!file} />
-            <div className="sample-score-controls">
-              <label className="select-field" htmlFor="sample-first-note">
-                <span>First sample note</span>
-                <select id="sample-first-note" value={sampleFirstNote} onChange={(event) => setSampleFirstNote(event.target.value)}>
-                  {['C4', 'D4', 'E4', 'F4', 'G4'].map((pitch) => <option key={pitch} value={pitch}>{pitch}</option>)}
-                </select>
-              </label>
-              <button className="sample-score-button" type="button" onClick={handleTrySample}>Try sample score</button>
-            </div>
             <p className="status-message" role="status" aria-live="polite">{message}</p>
           </div>
           {warnings.length > 0 && <div className="recognition-warnings" role="status"><strong>Recognition needs review</strong>{warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
-          {transcriptionUrl && <TranscriptionResult imageUrl={transcriptionUrl} targetClef={renderedClef} noteCount={noteCount} isSample={isSampleResult} musicXml={recognition?.musicXml} />}
+          {transcriptionUrl && <TranscriptionResult imageUrl={transcriptionUrl} targetClef={renderedClef} noteCount={noteCount} octaveShift={renderedOctaveShift} musicXml={recognition?.musicXml} />}
         </section>
         <p className="privacy-note"><Upload size={14} aria-hidden="true" /> Your image is processed by your configured Audiveris service.</p>
       </main>
