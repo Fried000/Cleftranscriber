@@ -27,10 +27,13 @@ test('invalid or localhost Vercel configuration fails with an actionable message
   assert.equal(omrEndpoints('http://127.0.0.1:8001', false).transcription.pathname, '/transcribe');
 });
 
-test('Codespaces empty 404 and authentication redirects identify port accessibility', () => {
+test('Codespaces upstream failures include status and port health guidance', () => {
   const endpoint = new URL('https://example-space-8001.app.github.dev/transcribe');
   for (const status of [302, 401, 403, 404, 502]) {
-    assert.match(omrFailure(endpoint, status), /set port 8001 to Public/);
+    const message = omrFailure(endpoint, status);
+    assert.match(message, new RegExp(`HTTP ${status}`));
+    assert.match(message, /forwarded port 8001 URL/);
+    assert.match(message, /If the port is not Public/);
   }
   assert.match(omrFailure(endpoint, 401, 'Invalid OMR service token.'), /OMR_SERVICE_TOKEN matches/);
 });

@@ -25,7 +25,7 @@ export function omrFailure(endpoint: URL, status: number, detail?: unknown): str
   const redirect = status >= 300 && status < 400;
   if (codespaces && (redirect || ([401, 403, 404, 502, 503].includes(status) && typeof detail !== 'string'))) {
     const port = endpoint.hostname.match(/-(\d+)\.app\.github\.dev$/)?.[1] || '8001';
-    return `The GitHub Codespaces OMR port is not publicly reachable. Start the Codespace and OMR service, then set port ${port} to Public in Codespaces → Ports → Port Visibility. Keep OMR_SERVICE_TOKEN enabled.`;
+    return `The GitHub Codespaces OMR endpoint returned HTTP ${status}. Confirm OMR_SERVICE_URL uses the active Codespace's forwarded port ${port} URL and that its /health endpoint returns the Audiveris health response. If the port is not Public, set it to Public in Codespaces → Ports → Port Visibility. Keep OMR_SERVICE_TOKEN enabled.`;
   }
   if (status === 401 || status === 403) return 'The OMR service rejected the server token. Check that OMR_SERVICE_TOKEN matches in Vercel and the OMR service.';
   if (status === 404 || status === 405) return 'The configured OMR URL has no recognition endpoint. Set OMR_SERVICE_URL to the OMR service base URL or its full /transcribe URL, then redeploy Vercel.';
