@@ -12,11 +12,12 @@ async function listen(server: Server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function upload(url: string) {
+async function upload(url: string, mode = 'detailed') {
   const form = new FormData();
   form.append('image', new Blob(['image fixture'], { type: 'image/png' }), 'crop.png');
   form.append('sourceClef', 'treble');
   form.append('targetClef', 'bass');
+  form.append('recognitionMode', mode);
   return fetch(url, { method: 'POST', body: form });
 }
 
@@ -31,6 +32,7 @@ test('production uploads retain the complete MusicXML and recognition warnings',
     const body = Buffer.concat(chunks).toString();
     assert.match(body, /name="file"/);
     assert.match(body, /name="source_clef"/);
+    assert.match(body, /name="recognition_mode"\r\n\r\ndetailed/);
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify(score));
   });
@@ -43,6 +45,14 @@ test('production uploads retain the complete MusicXML and recognition warnings',
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), score);
   }
+});
+
+test('unknown recognition mode never reaches the OMR service', async (t) => {
+  const api = createServer(createTranscriptionHandler('http://127.0.0.1:1', 'test-token'));
+  t.after(() => api.close());
+  const response = await upload(await listen(api), 'invent-notes');
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /standard or detailed/);
 });
 
 test('non-JSON upstream failure identifies service status instead of blaming the crop', async (t) => {

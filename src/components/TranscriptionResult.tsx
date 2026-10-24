@@ -1,5 +1,5 @@
 import { Download } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { changeClef } from '../musicxml';
 import type { Clef } from '../App';
 
@@ -13,6 +13,16 @@ type TranscriptionResultProps = {
 
 function TranscriptionResult({ imageUrl, targetClef, noteCount, octaveShift, musicXml }: TranscriptionResultProps) {
   const [xmlUrl, setXmlUrl] = useState<string | null>(null);
+  const notation = useMemo(() => {
+    if (!musicXml) return null;
+    const xml = new DOMParser().parseFromString(musicXml, 'application/xml');
+    return {
+      grace: xml.querySelectorAll('note > grace').length,
+      rests: xml.querySelectorAll('note > rest').length,
+      articulations: xml.querySelectorAll('notations > articulations > *').length,
+      tuplets: xml.querySelectorAll('notations > tuplet[type="start"]').length,
+    };
+  }, [musicXml]);
   useEffect(() => {
     if (!musicXml) { setXmlUrl(null); return; }
     const url = URL.createObjectURL(new Blob([changeClef(musicXml, targetClef as Clef, octaveShift)], { type: 'application/vnd.recordare.musicxml+xml' }));
@@ -36,6 +46,7 @@ function TranscriptionResult({ imageUrl, targetClef, noteCount, octaveShift, mus
         <img src={imageUrl} alt={`Transcribed sheet music with the requested ${targetClef} clef`} />
       </div>
       <p className="result-caption">{noteCount} recognized notes · {targetClef} clef · {octaveShift === 0 ? 'original octave' : `${octaveShift > 0 ? '+' : ''}${octaveShift} octave(s)`} · compare with the source</p>
+      {notation && <p className="result-caption">Detected: {notation.grace} grace notes · {notation.rests} rests · {notation.articulations} articulation marks · {notation.tuplets} tuplet groups. These counts describe the recognized score; compare them with your image for missing marks.</p>}
     </section>
   );
 }

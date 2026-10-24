@@ -43,18 +43,33 @@ def prepare_crop(image_data, image_path):
         ImageOps.expand(image, border=32, fill='white').save(image_path, format='PNG')
 
 
-def recognize(image_path, output_dir):
+def recognize(image_path, output_dir, recognition_mode='detailed'):
     executable = os.environ.get('AUDIVERIS_BIN') or shutil.which('audiveris') or shutil.which('Audiveris')
     if not executable or not Path(executable).is_file():
         raise HTTPException(status_code=503, detail='Audiveris is not available. Rebuild the OMR container or set AUDIVERIS_BIN to its executable.')
     music_font = os.environ.get('OMR_MUSIC_FONT', 'Leland')
     if music_font not in {'Bravura', 'Leland', 'Primus', 'FinaleJazz', 'JazzPerc'}:
         raise HTTPException(status_code=503, detail='OMR_MUSIC_FONT is not a supported Audiveris font.')
+    if recognition_mode not in {'standard', 'detailed'}:
+        raise HTTPException(status_code=400, detail='Choose standard or detailed recognition.')
+    # Small noteheads are disabled by default in Audiveris. Enable them for
+    # grace/cue notes, retaining standard mode to compare ambiguous scans.
+    # Do not enable smallBeams: on our reference scan it merges ordinary beams
+    # and loses notes/measures. Ordinary and grace beam recognition still runs.
+    switches = {
+        'smallHeads': recognition_mode == 'detailed',
+        'smallBeams': False,
+        'articulations': True,
+    }
+    switch_args = []
+    for name, enabled in switches.items():
+        switch_args.extend(['-constant', f'org.audiveris.omr.sheet.ProcessingSwitches.{name}={str(enabled).lower()}'])
     try:
         result = subprocess.run([executable, '-batch', '-constant', f'org.audiveris.omr.ui.symbol.MusicFont.defaultMusicFamily={music_font}',
                                  # Short, aliased beams in screenshots otherwise lose to quarter-note stems.
                                  '-constant', 'org.audiveris.omr.sheet.beam.BeamsBuilder.minBeamWidthHigh=2.0',
                                  '-constant', 'org.audiveris.omr.sheet.beam.BeamsBuilder.maxJitterRatio=0.05',
+                                 *switch_args,
                                  '-transcribe', '-export', '-output', str(output_dir), '--', str(image_path)],
                                 check=False, capture_output=True, text=True, encoding='utf-8', errors='replace',
                                 timeout=int(os.environ.get('OMR_TIMEOUT_SECONDS', '270')),
@@ -82,7 +97,7 @@ def health():
 
 
 @app.post('/transcribe')
-def transcribe(file: UploadFile = File(...), source_clef: str = Form(...), authorization: str | None = Header(default=None)):
+def transcribe(file: UploadFile = File(...), source_clef: str = Form(...), authorization: str | None = Header(default=None), recognition_mode: str = Form('detailed')):
     expected_token = os.environ.get('OMR_SERVICE_TOKEN', '')
     if not expected_token:
         raise HTTPException(status_code=503, detail='OMR_SERVICE_TOKEN is not configured.')
@@ -92,6 +107,8 @@ def transcribe(file: UploadFile = File(...), source_clef: str = Form(...), autho
         raise HTTPException(status_code=415, detail='Use a PNG, JPG, JPEG, or WEBP image.')
     if source_clef not in {'treble', 'bass', 'alto', 'tenor'}:
         raise HTTPException(status_code=400, detail='Select a valid source clef.')
+    if recognition_mode not in {'standard', 'detailed'}:
+        raise HTTPException(status_code=400, detail='Choose standard or detailed recognition.')
     data = file.file.read(MAX_FILE_SIZE + 1)
     if not data:
         raise HTTPException(status_code=400, detail='The image is empty.')
@@ -106,7 +123,7 @@ def transcribe(file: UploadFile = File(...), source_clef: str = Form(...), autho
                 prepare_crop(data, image_path)
             except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
                 raise HTTPException(status_code=400, detail='The uploaded file could not be opened as a score image.') from error
-            musicxml, uncertain = recognize(image_path, output_dir)
+            musicxml, uncertain = recognize(image_path, output_dir, recognition_mode)
             try:
                 result = inspect_score(musicxml)
             except ValueError as error:

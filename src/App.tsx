@@ -60,6 +60,7 @@ function App() {
   const [noteCount, setNoteCount] = useState(0);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [octaveShift, setOctaveShift] = useState(0);
+  const [recognitionMode, setRecognitionMode] = useState('detailed');
   const [renderedOctaveShift, setRenderedOctaveShift] = useState(0);
   const [recognition, setRecognition] = useState<RecognizedScore | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -108,6 +109,7 @@ function App() {
       formData.append('image', await prepareImageForGeneration(croppedFile || file));
       formData.append('sourceClef', sourceClef);
       formData.append('targetClef', targetClef);
+      formData.append('recognitionMode', recognitionMode);
       const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
       if (!response.ok) {
         const result = await response.json().catch(() => null) as { error?: string } | null;
@@ -172,6 +174,7 @@ function App() {
     setSourceClef(DEFAULT_SOURCE);
     setTargetClef(DEFAULT_TARGET);
     setOctaveShift(0);
+    setRecognitionMode('detailed');
     setTranscriptionUrl(null);
     setMessage('');
   };
@@ -223,6 +226,18 @@ function App() {
             <button type="button" onClick={() => setOctaveShift((value) => value + 2)} disabled={octaveShift > 1} aria-label="Transpose up two octaves">+2 octaves</button>
           </div>
           <p className="octave-hint">Lower or raise all notes together to fit your reading range. Notes beyond the staff use ledger lines.</p>
+
+          <div className="recognition-settings">
+            <label htmlFor="recognition-mode">Score recognition</label>
+            <select id="recognition-mode" value={recognitionMode} disabled={isTranscribing} onChange={(event) => {
+              setRecognitionMode(event.target.value);
+              setMessage('Recognition mode changed. Press Transcribe to read the image again.');
+            }}>
+              <option value="detailed">Detailed — include small grace and cue notes</option>
+              <option value="standard">Standard — fewer small-symbol detections</option>
+            </select>
+            <p>Detailed mode reads small grace and cue noteheads. Accents, staccato, rests and supported tuplets are read in both modes. Compare with the original: small marks can still be missed or misread. If ordinary notes look wrong, try Standard and transcribe again.</p>
+          </div>
 
           <div className="action-area">
             <TranscribeButton onClick={handleTranscribe} isLoading={isTranscribing} disabled={!file} />

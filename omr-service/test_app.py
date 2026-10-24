@@ -37,8 +37,17 @@ class ScoreTests(unittest.TestCase):
         self.assertIn('measures 1', score['warnings'][0])
 
     def test_tuplet_and_grace_notation_is_not_reduced_to_duration_names(self):
-        data = XML.replace(b'<type>half</type>', b'<type>half</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>')
-        self.assertEqual(inspect_score(data)['musicXml'].encode(), data)
+        data = (Path(__file__).parents[1] / 'tests/fixtures/complex-notation.musicxml').read_bytes()
+        result = inspect_score(data)
+        self.assertEqual(result['musicXml'].encode(), data)
+        self.assertEqual(result['warnings'], [])
+        root = ET.fromstring(result['musicXml'])
+        self.assertEqual(len(root.findall('.//note/grace')), 2)
+        self.assertEqual(len(root.findall('.//note/rest')), 1)
+        self.assertEqual(len(root.findall('.//time-modification')), 3)
+        self.assertIsNotNone(root.find('.//articulations/staccato'))
+        self.assertIsNotNone(root.find('.//articulations/accent'))
+        self.assertIsNotNone(root.find('.//ornaments/trill-mark'))
 
     def test_flags_wrong_rest_symbol_even_when_bar_adds_up(self):
         data = XML.replace(b'<rest/><duration>1</duration><type>eighth</type>',
@@ -93,6 +102,13 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(response.json()['musicXml'].encode(), XML)
         self.assertIn('measures 3', response.json()['warnings'][0])
         recognize_image.assert_called_once()
+        self.assertEqual(recognize_image.call_args.args[2], 'detailed')
+
+    def test_unknown_recognition_mode_is_rejected_before_scanning(self):
+        response = self.client.post('/transcribe', headers={'Authorization': 'Bearer test-token'},
+                                    data={'source_clef': 'treble', 'recognition_mode': 'invent-notes'},
+                                    files={'file': ('score.png', b'image', 'image/png')})
+        self.assertEqual(response.status_code, 400)
 
 
 class CropTests(unittest.TestCase):
@@ -151,6 +167,12 @@ class CropTests(unittest.TestCase):
             self.assertEqual(uncertain, ['3'])
             self.assertIn('-batch', run.call_args.args[0])
             self.assertIn('-export', run.call_args.args[0])
+            self.assertIn('org.audiveris.omr.sheet.ProcessingSwitches.smallHeads=true', run.call_args.args[0])
+            self.assertIn('org.audiveris.omr.sheet.ProcessingSwitches.smallBeams=false', run.call_args.args[0])
+            self.assertIn('org.audiveris.omr.sheet.ProcessingSwitches.articulations=true', run.call_args.args[0])
+            with patch.dict('os.environ', {'AUDIVERIS_BIN': str(executable)}):
+                recognize(root / 'score.png', root, 'standard')
+            self.assertIn('org.audiveris.omr.sheet.ProcessingSwitches.smallHeads=false', run.call_args.args[0])
 
 
 @unittest.skipUnless(os.environ.get('OMR_TEST_IMAGE'), 'Set OMR_TEST_IMAGE to the provided reference screenshot for a real recognition test.')
@@ -165,6 +187,10 @@ class ReferenceRecognitionTests(unittest.TestCase):
             first = ET.fromstring(xml).find('part/measure')
             actual = [(note.findtext('pitch/step', 'R'), note.findtext('pitch/alter', '0'), note.findtext('pitch/octave'), note.findtext('type')) for note in first.findall('note')]
             self.assertEqual(actual, [('C','0','5','eighth'),('R','0',None,'eighth'),('A','0','4','eighth'),('F','0','4','eighth'),('R','0',None,'eighth'),('C','0','5','eighth'),('R','0',None,'eighth'),('B','-1','4','eighth')])
+            score = ET.fromstring(xml)
+            self.assertEqual(len(score.findall('part/measure')), 66)
+            self.assertGreaterEqual(len(score.findall('.//note/grace')), 5)
+            self.assertTrue(any(note.find('beam') is not None for note in score.findall('.//note') if note.find('grace') is not None))
 
 
 if __name__ == '__main__':

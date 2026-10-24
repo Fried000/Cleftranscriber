@@ -13,3 +13,5 @@
 .recognition-warnings p { margin: 8px 0 0; }
 
 .octave-controls{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:24px;font-size:14px}.octave-controls>span{font-weight:600}.octave-controls button{padding:10px 14px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink);font:inherit;cursor:pointer}.octave-controls button:hover{border-color:var(--green)}.octave-controls button:disabled{opacity:.45;cursor:not-allowed}.octave-controls button:focus-visible{outline:3px solid #b7e2ca;outline-offset:2px}.octave-controls output{min-width:85px;text-align:center;font-weight:600}.octave-hint{font-size:12px;color:var(--muted);line-height:1.5}
+
+.recognition-settings{display:grid;gap:8px;margin-top:24px}.recognition-settings label{font-size:14px;font-weight:600}.recognition-settings select{max-width:100%;width:fit-content;padding:10px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink);font:inherit}.recognition-settings p{margin:0;font-size:12px;color:var(--muted);line-height:1.5}

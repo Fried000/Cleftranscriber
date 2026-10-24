@@ -52,6 +52,7 @@ export function createTranscriptionHandler(
       temporaryPath = uploadedImage?.filepath;
       const sourceClef = firstField(fields.sourceClef);
       const targetClef = firstField(fields.targetClef);
+      const recognitionMode = firstField(fields.recognitionMode) || 'detailed';
 
       if (!uploadedImage || !sourceClef || !CLEFS.includes(sourceClef as Clef) || !targetClef || !CLEFS.includes(targetClef as Clef)) {
         respondWithError(response, 400, 'Upload an image and select valid source and target clefs.');
@@ -61,11 +62,16 @@ export function createTranscriptionHandler(
         respondWithError(response, 400, 'Use a PNG, JPG, JPEG, or WEBP image.');
         return;
       }
+      if (!['standard', 'detailed'].includes(recognitionMode)) {
+        respondWithError(response, 400, 'Choose standard or detailed recognition.');
+        return;
+      }
 
       const imageData = await readFile(uploadedImage.filepath);
       const serviceForm = new FormData();
       serviceForm.append('file', new Blob([imageData], { type: uploadedImage.mimetype }), uploadedImage.originalFilename || 'score.png');
       serviceForm.append('source_clef', sourceClef);
+      serviceForm.append('recognition_mode', recognitionMode);
       const serviceResponse = await fetch(endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${serviceToken}` },

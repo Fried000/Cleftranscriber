@@ -50,7 +50,8 @@ export function changeClef(musicXml: string, target: Clef, octaveShift = 0): str
     for (const attribute of ['default-x', 'default-y', 'relative-x', 'relative-y']) note.removeAttribute(attribute);
     for (const position of note.querySelectorAll('rest > display-step, rest > display-octave, stem')) position.remove();
   }
-  // Preserve durations, accidentals, beams, voices, ties and slurs.
+  // Preserve grace/cue tags, articulations, ornaments, tuplets, durations,
+  // accidentals, beams, voices, ties and slurs. Grace notes shift with the rest.
   return new XMLSerializer().serializeToString(xml);
 }
 

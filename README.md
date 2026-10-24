@@ -18,6 +18,16 @@ Open the Vite URL. Images can be PNG, JPEG, or WEBP, up to 10 MB. The whole imag
 
 The service normalizes the measured staff spacing to retain small notes on full pages. `OMR_MUSIC_FONT` defaults to `Leland`. It can also be `Bravura`, `Primus`, `FinaleJazz`, or `JazzPerc` to match the source notation. Font matching affects recognition of hollow and whole noteheads. Changing the target clef re-engraves the existing MusicXML without running recognition again.
 
+### Grace notes and complex notation
+
+The default **Detailed** recognition mode explicitly enables Audiveris small-notehead recognition (`ProcessingSwitches.smallHeads`), which is disabled in the engine defaults. **Standard** disables it for comparison when small marks are misclassified. Articulation recognition is enabled in both modes. Re-transcribe after changing the mode. The result lists detected grace notes, rests, articulations and tuplet groups so omissions can be checked against the source.
+
+The small-beam processing switch remains disabled: on the provided 66-measure screenshot, enabling it reduced recognition to 64 measures and lost ordinary notes. Enabling only small noteheads preserved 66 measures and the verified opening bar while detecting eight grace-note candidates, compared with zero in Standard. Candidates can be false positives, and other measures still have rhythm errors. These measurements do not certify every note. Audiveris supports triplets and sextuplets; other tuplets are an [engine limitation](https://audiveris.github.io/audiveris/_pages/reference/limitations/).
+
+Grace notes (including slash and beaming), accents, staccato, ornaments, rests, dots and tuplet timing are retained in the recognized MusicXML and its clef/octave conversions. Conversion does not insert ornaments that the scanner failed to recognize. A browser regression fixture in `tests/fixtures/complex-notation.musicxml` verifies these markings independently of image recognition.
+
+ClefConvert's public client identifies OpenSheetMusicDisplay as its engraving library; its image recognition runs through a server endpoint and its exact OMR model is not publicly identified by the inspected pages or client bundle. This project already uses OpenSheetMusicDisplay. The changes here configure our Audiveris engine; they do not claim to use ClefConvert's private backend.
+
 Rebuild the service after backend changes:
 
 ```bash
