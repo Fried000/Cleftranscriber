@@ -39,6 +39,28 @@ Run `npm run dev` in another terminal. `AUDIVERIS_BIN` can point to a portable c
 
 ## Verification
 
+### Connect Vercel to a Windows PC
+
+With native Python dependencies and Audiveris installed, run the following from the project folder in PowerShell:
+
+```powershell
+.\scripts\start-omr-tunnel.ps1
+```
+
+The launcher also recognizes this workspace's existing portable Audiveris and Python dependencies. Otherwise pass `-PythonPath` and `-AudiverisPath` with your installed executable paths. It starts the service on `127.0.0.1:8001`, verifies the Audiveris health response, and starts a checksum-verified Cloudflare Quick Tunnel. It creates or reuses a private `OMR_SERVICE_TOKEN` in `.env.local`; local Vite uses the same token. Restart Vite if it was already running.
+
+Copy the two values from `.local-omr/vercel.env` into the Vercel project's **Production** environment variables and redeploy. This file contains a secret and is excluded from Git. Do not paste it into chat or commit it. Check the deployed `/api/omr-health` and then upload a score.
+
+Keep the PC awake and connected. A Quick Tunnel's public URL changes after restarting it, requiring an updated Vercel `OMR_SERVICE_URL` and another deployment. For a stable URL, use a named Cloudflare Tunnel with a domain. See [Cloudflare's Quick Tunnel documentation](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
+
+Stop the service and tunnel started by this launcher with:
+
+```powershell
+.\scripts\stop-omr-tunnel.ps1
+```
+
+### Run checks
+
 ```bash
 npm test
 npm run build

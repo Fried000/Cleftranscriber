@@ -9,3 +9,4 @@ __pycache__/
 .test-deps/
 .test-output/
 .pnpm-store/
+.local-omr/
