@@ -12,7 +12,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from score import inspect_score, read_score
+from score import inspect_score, read_score, repair_notation
 
 app = FastAPI(title='Clef Transcriber OMR')
 MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -20,7 +20,31 @@ ALLOWED_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
 logger = logging.getLogger('uvicorn.error')
 
 
-def prepare_crop(image_data, image_path):
+def recognition_environment():
+    environment = os.environ.copy()
+    tessdata = environment.get('TESSDATA_PREFIX')
+    if os.name == 'nt' and not tessdata and environment.get('APPDATA'):
+        installed = Path(environment['APPDATA']) / 'AudiverisLtd/audiveris/config/tessdata'
+        if (installed / 'eng.traineddata').is_file():
+            tessdata = str(installed)
+            environment['TESSDATA_PREFIX'] = tessdata
+    # Native Tesseract on Windows cannot enumerate languages through some
+    # non-ASCII paths. Cache only public OCR data at an ASCII path; no tokens
+    # or user images are placed in this cache.
+    if os.name == 'nt' and tessdata and not tessdata.isascii():
+        cache = Path(environment.get('OMR_TESSDATA_CACHE', str(Path(environment.get('PUBLIC', 'C:/Users/Public')) / 'Documents/ClefTranscriber/tessdata')))
+        if not str(cache).isascii():
+            raise HTTPException(status_code=503, detail='Set OMR_TESSDATA_CACHE to an ASCII-only directory for Windows OCR.')
+        cache.mkdir(parents=True, exist_ok=True)
+        for language in Path(tessdata).glob('*.traineddata'):
+            destination = cache / language.name
+            if not destination.exists() or destination.stat().st_size != language.stat().st_size:
+                shutil.copy2(language, destination)
+        environment['TESSDATA_PREFIX'] = str(cache)
+    return environment
+
+
+def prepare_crop(image_data, image_path, recognition_mode='detailed'):
     with Image.open(BytesIO(image_data)) as original:
         image = ImageOps.exif_transpose(original).convert('RGBA')
         paper = Image.new('RGBA', image.size, 'white')
@@ -38,7 +62,8 @@ def prepare_crop(image_data, image_path):
         spacing = float(np.median(gaps)) if len(gaps) >= 4 else 12
         # Cap enlargement, but never shrink a high-resolution source page:
         # downsampling can erase eighth-rest hooks, dots and flags.
-        scale = max(1, min(4, 24 / spacing, 6000 / max(image.size)))
+        target_spacing = 32 if recognition_mode == 'detailed' else 24
+        scale = max(1, min(4, target_spacing / spacing, 6000 / max(image.size), (18_000_000 / (image.width * image.height)) ** .5))
         image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
         ImageOps.expand(image, border=32, fill='white').save(image_path, format='PNG')
 
@@ -73,6 +98,7 @@ def recognize(image_path, output_dir, recognition_mode='detailed'):
                                  '-transcribe', '-export', '-output', str(output_dir), '--', str(image_path)],
                                 check=False, capture_output=True, text=True, encoding='utf-8', errors='replace',
                                 timeout=int(os.environ.get('OMR_TIMEOUT_SECONDS', '270')),
+                                env=recognition_environment(),
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     except subprocess.TimeoutExpired as error:
         raise HTTPException(status_code=504, detail='Recognition took too long. Select fewer complete staff systems and try again.') from error
@@ -120,14 +146,16 @@ def transcribe(file: UploadFile = File(...), source_clef: str = Form(...), autho
             output_dir = Path(directory) / 'output'
             output_dir.mkdir()
             try:
-                prepare_crop(data, image_path)
+                prepare_crop(data, image_path, recognition_mode)
             except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
                 raise HTTPException(status_code=400, detail='The uploaded file could not be opened as a score image.') from error
             musicxml, uncertain = recognize(image_path, output_dir, recognition_mode)
+            musicxml, repairs = repair_notation(musicxml)
             try:
                 result = inspect_score(musicxml)
             except ValueError as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
+            result['warnings'].extend(repairs)
             if uncertain:
                 result['warnings'].append('The recognition engine could not resolve rhythm in measures ' + ', '.join(uncertain) + '. Check these against the source.')
             return result

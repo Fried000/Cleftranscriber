@@ -71,7 +71,15 @@ try {
         $env:PYTHONPATH = (Join-Path $projectRoot '.test-deps') + [IO.Path]::PathSeparator + $env:PYTHONPATH
     }
     $tessdata = Join-Path $projectRoot '.test-deps/audiveris/tessdata'
-    if (Test-Path -LiteralPath (Join-Path $tessdata 'eng.traineddata')) { $env:TESSDATA_PREFIX = $tessdata }
+    if (Test-Path -LiteralPath (Join-Path $tessdata 'eng.traineddata')) {
+        $languageFile = Join-Path $tessdata 'eng.traineddata'
+        $languageHash = 'DAA0C97D651C19FBA3B25E81317CD697E9908C8208090C94C3905381C23FC047'
+        if ((Get-FileHash -LiteralPath $languageFile -Algorithm SHA256).Hash -ne $languageHash) {
+            Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/tesseract-ocr/tessdata/ced78752cc61322fb554c280d13360b35b8684e4/eng.traineddata' -OutFile $languageFile
+        }
+        if ((Get-FileHash -LiteralPath $languageFile -Algorithm SHA256).Hash -ne $languageHash) { throw 'English OCR data checksum failed.' }
+        $env:TESSDATA_PREFIX = $tessdata
+    }
     $service = Start-Process -FilePath $PythonPath -ArgumentList @('-m', 'uvicorn', 'app:app', '--app-dir', 'omr-service', '--host', '127.0.0.1', '--port', '8001') -WorkingDirectory $projectRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $runtimeDir 'service.out.log') -RedirectStandardError (Join-Path $runtimeDir 'service.err.log') -PassThru
     $owned += @{ id = $service.Id; started = $service.StartTime.ToUniversalTime().ToString('o') }
     $healthy = $false

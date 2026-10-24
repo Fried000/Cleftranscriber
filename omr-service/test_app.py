@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from PIL import Image, ImageDraw
 
 from app import app, prepare_crop, recognize
-from score import inspect_score
+from score import inspect_score, repair_notation
 
 XML = b'''<score-partwise><part id="P1"><measure number="1">
 <attributes><divisions>2</divisions><key><fifths>-1</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
@@ -23,6 +23,48 @@ XML = b'''<score-partwise><part id="P1"><measure number="1">
 
 
 class ScoreTests(unittest.TestCase):
+    def test_signature_and_tempo_changes_are_not_dropped(self):
+        data = (Path(__file__).parents[1] / 'tests/fixtures/signature-changes.musicxml').read_bytes()
+        result = inspect_score(data)
+        self.assertEqual(result['musicXml'].encode(), data)
+        self.assertEqual(result['warnings'], [])
+        root = ET.fromstring(result['musicXml'])
+        self.assertEqual([node.text for node in root.findall('.//key/fifths')], ['-1', '-6', '2'])
+        self.assertEqual([node.text for node in root.findall('.//time/beats')], ['4', '3', '5'])
+        self.assertEqual([node.text for node in root.findall('.//per-minute')], ['120', '90', '96'])
+
+    def test_recovers_only_the_invalid_chord_inside_a_bounded_grace_run(self):
+        data = b'''<score-partwise><part id="P1"><measure number="58">
+        <note default-x="89"><grace/><pitch><step>G</step><octave>5</octave></pitch><voice>1</voice><type>eighth</type><beam number="1">begin</beam></note>
+        <note default-x="98"><chord/><pitch><step>A</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><type>eighth</type><beam number="1">begin</beam></note>
+        <note default-x="110"><grace/><pitch><step>B</step><octave>5</octave></pitch><voice>1</voice><type>eighth</type><beam number="1">end</beam></note>
+        </measure></part></score-partwise>'''
+        fixed, warnings = repair_notation(data)
+        notes = ET.fromstring(fixed).findall('.//note')
+        self.assertEqual(len(ET.fromstring(fixed).findall('.//grace')), 3)
+        self.assertIsNone(notes[1].find('chord'))
+        self.assertIsNone(notes[1].find('duration'))
+        self.assertEqual(notes[1].findtext('beam'), 'continue')
+        self.assertIn('58', warnings[0])
+        # True grace chords remain chords, even in a beamed group.
+        genuine = data.replace(b'<chord/><pitch>', b'<grace/><chord/><pitch>').replace(b'<duration>2</duration>', b'')
+        self.assertEqual(repair_notation(genuine), (genuine, []))
+        # Without a closing grace beam, do not guess what a normal note meant.
+        unbounded = data.replace(b'<beam number="1">end</beam>', b'')
+        self.assertEqual(repair_notation(unbounded), (unbounded, []))
+
+    def test_dot_repair_preserves_true_double_dots_and_staccato(self):
+        data = b'''<score-partwise><part id="P1"><measure number="1"><attributes><divisions>4</divisions></attributes>
+        <note><pitch><step>C</step><octave>5</octave></pitch><duration>6</duration><type>quarter</type><dot/><dot/><notations><articulations><staccato/></articulations></notations></note>
+        <note><pitch><step>D</step><octave>5</octave></pitch><duration>7</duration><type>quarter</type><dot/><dot/></note>
+        </measure></part></score-partwise>'''
+        fixed, warnings = repair_notation(data)
+        notes = ET.fromstring(fixed).findall('.//note')
+        self.assertEqual([len(note.findall('dot')) for note in notes], [1, 2])
+        self.assertIsNotNone(notes[0].find('notations/articulations/staccato'))
+        self.assertEqual([note.findtext('duration') for note in notes], ['6', '7'])
+        self.assertIn('recognized durations', warnings[0])
+
     def test_preserves_xml_pitches_rhythm_keys_and_notation_verbatim(self):
         score = inspect_score(XML)
         self.assertEqual(score['musicXml'].encode(), XML)
@@ -124,6 +166,9 @@ class CropTests(unittest.TestCase):
             path = Path(directory) / 'score.png'
             prepare_crop(data.getvalue(), path)
             with Image.open(path) as prepared:
+                self.assertEqual(prepared.size, (3264, 1024))
+            prepare_crop(data.getvalue(), path, 'standard')
+            with Image.open(path) as prepared:
                 self.assertEqual(prepared.size, (2464, 784))
 
     def test_does_not_shrink_large_page_and_small_rest_details(self):
@@ -191,6 +236,7 @@ class ReferenceRecognitionTests(unittest.TestCase):
             self.assertEqual(len(score.findall('part/measure')), 66)
             self.assertGreaterEqual(len(score.findall('.//note/grace')), 5)
             self.assertTrue(any(note.find('beam') is not None for note in score.findall('.//note') if note.find('grace') is not None))
+            self.assertEqual(score.findtext('.//metronome/per-minute'), '120')
 
 
 if __name__ == '__main__':

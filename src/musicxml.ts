@@ -49,6 +49,11 @@ export function changeClef(musicXml: string, target: Clef, octaveShift = 0): str
   for (const note of xml.querySelectorAll('note')) {
     for (const attribute of ['default-x', 'default-y', 'relative-x', 'relative-y']) note.removeAttribute(attribute);
     for (const position of note.querySelectorAll('rest > display-step, rest > display-octave, stem')) position.remove();
+    // Articulation coordinates also refer to the old staff. Keeping them after
+    // a clef/octave change can put staccato dots on or beside the wrong note.
+    for (const mark of note.querySelectorAll('notations > articulations > *')) {
+      for (const attribute of ['default-x', 'default-y', 'relative-x', 'relative-y']) mark.removeAttribute(attribute);
+    }
   }
   // Preserve grace/cue tags, articulations, ornaments, tuplets, durations,
   // accidentals, beams, voices, ties and slurs. Grace notes shift with the rest.
@@ -65,9 +70,12 @@ export async function renderMusicXml(musicXml: string, clef: Clef, octaveShift =
       backend: 'canvas', autoResize: false, pageFormat: 'Endless',
       drawTitle: false, drawComposer: false, drawPartNames: false,
       drawCredits: false, drawMeasureNumbers: true,
+      drawMetronomeMarks: true, drawTimeSignatures: true,
       newSystemFromXML: true, autoBeam: false,
       setWantedStemDirectionByXml: false, pageBackgroundColor: '#ffffff',
     });
+    display.EngravingRules.RenderKeySignatures = true;
+    display.EngravingRules.RenderFirstTempoExpression = true;
     await display.load(changeClef(musicXml, clef, octaveShift));
     await document.fonts.ready;
     display.render();

@@ -3,6 +3,91 @@ from fractions import Fraction
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
+NOTE_LENGTHS = {'maxima': 32, 'long': 16, 'breve': 8, 'whole': 4,
+                'half': 2, 'quarter': 1, 'eighth': Fraction(1, 2),
+                '16th': Fraction(1, 4), '32nd': Fraction(1, 8),
+                '64th': Fraction(1, 16), '128th': Fraction(1, 32),
+                '256th': Fraction(1, 64), '512th': Fraction(1, 128),
+                '1024th': Fraction(1, 256)}
+
+
+def repair_notation(musicxml):
+    """Repair bounded export contradictions, reporting every changed measure.
+
+    This does not infer missing pitches, signatures or durations from bar totals.
+    A legitimate grace chord (all members marked grace) is never flattened.
+    """
+    root = ET.fromstring(musicxml)
+    grace_repairs, dot_repairs = [], []
+    for part in root.findall('part'):
+        divisions = 1
+        for measure in part.findall('measure'):
+            notes = measure.findall('note')
+            for start, note in enumerate(notes):
+                if note.find('grace') is None or note.find('beam[@number="1"]') is None:
+                    continue
+                if note.findtext('beam[@number="1"]') != 'begin':
+                    continue
+                group = [note]
+                candidates = []
+                for following in notes[start + 1:start + 9]:
+                    if following.findtext('voice', '1') != note.findtext('voice', '1') or following.findtext('staff', '1') != note.findtext('staff', '1'):
+                        break
+                    if following.find('grace') is None:
+                        if following.find('chord') is None or following.find('pitch') is None or following.find('tie') is not None:
+                            break
+                        candidates.append(following)
+                    group.append(following)
+                    if following.find('grace') is not None and following.findtext('beam[@number="1"]') == 'end':
+                        try:
+                            positions = [float(item.attrib['default-x']) for item in group]
+                        except (KeyError, ValueError):
+                            break
+                        same_type = len({item.findtext('type') for item in group}) == 1
+                        if candidates and same_type and all(a < b for a, b in zip(positions, positions[1:])):
+                            for candidate in candidates:
+                                for tag in ('chord', 'duration'):
+                                    for child in candidate.findall(tag):
+                                        candidate.remove(child)
+                                candidate.insert(0, ET.Element('grace', note.find('grace').attrib))
+                                beam = candidate.find('beam[@number="1"]')
+                                if beam is not None:
+                                    beam.text = 'continue'
+                                else:
+                                    beam = ET.Element('beam', {'number': '1'})
+                                    beam.text = 'continue'
+                                    notation = candidate.find('notations')
+                                    candidate.insert(list(candidate).index(notation) if notation is not None else len(candidate), beam)
+                            grace_repairs.append(measure.get('number', '?'))
+                        break
+            for event in measure:
+                if event.tag == 'attributes':
+                    divisions = int(event.findtext('divisions', str(divisions)))
+                if event.tag != 'note' or event.find('grace') is not None or not event.findall('dot'):
+                    continue
+                kind = event.findtext('type')
+                if kind not in NOTE_LENGTHS or event.find('rest[@measure="yes"]') is not None:
+                    continue
+                base = Fraction(NOTE_LENGTHS[kind])
+                tuplet = event.find('time-modification')
+                if tuplet is not None:
+                    base *= Fraction(int(tuplet.findtext('normal-notes', '1')), int(tuplet.findtext('actual-notes', '1')))
+                duration = Fraction(int(event.findtext('duration', '0')), divisions)
+                possible = [dots for dots in range(4) if base * sum((Fraction(1, 2 ** dot) for dot in range(dots + 1)), Fraction(0)) == duration]
+                if len(possible) == 1 and possible[0] != len(event.findall('dot')):
+                    for dot in event.findall('dot'):
+                        event.remove(dot)
+                    index = list(event).index(event.find('type')) + 1
+                    for count in range(possible[0]):
+                        event.insert(index + count, ET.Element('dot'))
+                    dot_repairs.append(measure.get('number', '?'))
+    warnings = []
+    if grace_repairs:
+        warnings.append('Recovered a sequential grace-note group from contradictory chord markers in measures ' + ', '.join(dict.fromkeys(grace_repairs)) + '. Compare the group with the source.')
+    if dot_repairs:
+        warnings.append('Aligned augmentation dots with recognized durations in measures ' + ', '.join(dict.fromkeys(dot_repairs)) + '. Verify the rhythm against the source; recognized timing can still be wrong.')
+    return (ET.tostring(root, encoding='utf-8', xml_declaration=True), warnings) if warnings else (musicxml, [])
+
 
 def read_score(path):
     if path.suffix.lower() != '.mxl':
@@ -30,12 +115,7 @@ def inspect_score(musicxml):
     uncertain = []
     notation_issues = []
     gap_issues = []
-    note_lengths = {'maxima': 32, 'long': 16, 'breve': 8, 'whole': 4,
-                    'half': 2, 'quarter': 1, 'eighth': Fraction(1, 2),
-                    '16th': Fraction(1, 4), '32nd': Fraction(1, 8),
-                    '64th': Fraction(1, 16), '128th': Fraction(1, 32),
-                    '256th': Fraction(1, 64), '512th': Fraction(1, 128),
-                    '1024th': Fraction(1, 256)}
+    note_lengths = NOTE_LENGTHS
     for part in parts:
         divisions, expected = 1, Fraction(4)
         for measure in part.findall('measure'):

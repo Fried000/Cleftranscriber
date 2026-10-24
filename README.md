@@ -26,6 +26,12 @@ The small-beam processing switch remains disabled: on the provided 66-measure sc
 
 Grace notes (including slash and beaming), accents, staccato, ornaments, rests, dots and tuplet timing are retained in the recognized MusicXML and its clef/octave conversions. Conversion does not insert ornaments that the scanner failed to recognize. A browser regression fixture in `tests/fixtures/complex-notation.musicxml` verifies these markings independently of image recognition.
 
+Detailed mode targets 32-pixel staff spacing (Standard: 24), with a 4x enlargement cap and an enlargement pixel budget below Audiveris's 20-million-pixel limit. It repairs an invalid normal-note chord marker only when it is bounded by a matching grace beam and the group has strictly increasing horizontal positions. Real grace chords remain chords. Dot repairs only align a contradictory printed dot count with an exactly representable recognized duration; they do not certify the scanner's timing. Repairs are listed in the review warnings.
+
+Tempo recognition requires legacy-capable Tesseract language data: Audiveris 5.11 explicitly uses the legacy OCR engine and cannot use `tessdata_fast` English alone. Docker and the portable Windows launcher install the pinned, checksum-verified compatible English data. On Windows, public OCR language files are cached under `%PUBLIC%/Documents/ClefTranscriber/tessdata` to avoid native Unicode-path failures; `OMR_TESSDATA_CACHE` can override that ASCII-only path. No tokens or user images are stored there.
+
+The output's **Correct a misread measure** panel can repair key/time/quarter-note-tempo changes or individual note/rest types, dots and grace/chord status without rescanning. These edits are included in PNG and MusicXML downloads. Key edits preserve recognized pitches; check accidentals separately. Signature and tempo rendering, including mid-score changes, is covered by `tests/fixtures/signature-changes.musicxml`. Articulation coordinates from the old clef are removed during conversion so staccato marks are re-engraved with the shifted notes.
+
 ClefConvert's public client identifies OpenSheetMusicDisplay as its engraving library; its image recognition runs through a server endpoint and its exact OMR model is not publicly identified by the inspected pages or client bundle. This project already uses OpenSheetMusicDisplay. The changes here configure our Audiveris engine; they do not claim to use ClefConvert's private backend.
 
 Rebuild the service after backend changes:

@@ -6,6 +6,7 @@ import ImageUploader from './components/ImageUploader';
 import ClefSelector from './components/ClefSelector';
 import TranscribeButton from './components/TranscribeButton';
 import TranscriptionResult from './components/TranscriptionResult';
+import ScoreCorrections from './components/ScoreCorrections';
 import { renderMusicXml, type RecognizedScore } from './musicxml';
 import './transcription.css';
 
@@ -245,6 +246,12 @@ function App() {
           </div>
           {warnings.length > 0 && <div className="recognition-warnings" role="status"><strong>Recognition needs review</strong>{warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
           {transcriptionUrl && <TranscriptionResult imageUrl={transcriptionUrl} targetClef={renderedClef} noteCount={noteCount} octaveShift={renderedOctaveShift} musicXml={recognition?.musicXml} />}
+          {recognition && <ScoreCorrections musicXml={recognition.musicXml} disabled={isTranscribing} onApply={(musicXml) => {
+            const updatedWarnings = [...new Set([...recognition.warnings, 'Manual measure corrections applied. Compare note lengths, grace groups and signatures with the source.'])];
+            const corrected = new DOMParser().parseFromString(musicXml, 'application/xml');
+            setRecognition({ ...recognition, musicXml, noteCount: corrected.querySelectorAll('note > pitch').length, warnings: updatedWarnings });
+            setWarnings(updatedWarnings);
+          }} />}
         </section>
         <p className="privacy-note"><Upload size={14} aria-hidden="true" /> Your image is processed by your configured Audiveris service.</p>
       </main>
